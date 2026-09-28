@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Teleprompter speech bridge</title>
+<style>
+  body { margin: 0; background: #0b0d10; color: #8a93a3; font: 13px "Segoe UI", sans-serif; padding: 10px; }
+</style>
+</head>
+<body>
+<!-- דף גשר: מריץ את זיהוי הדיבור של הדפדפן (Edge/Chrome) בחלון מוסתר ומעביר את הטקסט לאפליקציה -->
+<div id="log">speech bridge</div>
+<script>
+(() => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const post = (path, body) => fetch(path, { method: 'POST', body: JSON.stringify(body) }).catch(() => {});
+  const status = (state, msg) => post('/bridge/status', { state, msg });
+  let rec = null, want = false, lang = 'he-IL', fastFails = 0, startedAt = 0;
+
+  if (!SR) { status('error', 'הדפדפן לא תומך בזיהוי דיבור'); return; }
+
+  function start() {
+    if (rec) return;
+    rec = new SR();
+    rec.lang = lang;
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = e => {
+      fastFails = 0;
+      let text = '';
+      for (let i = Math.max(0, e.results.length - 2); i < e.results.length; i++) text += ' ' + e.results[i][0].transcript;
+      post('/bridge/text', { text: text.trim() });
+    };
+    rec.onerror = e => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { want = false; status('error', 'אין הרשאה למיקרופון'); }
+      else if (e.error === 'network') status('error', 'אין חיבור לאינטרנט - זיהוי הדיבור המקוון לא זמין');
+      else if (e.error === 'audio-capture') { want = false; status('error', 'לא נמצא מיקרופון'); }
+      else status('error', 'שגיאה: ' + e.error);
+    };
+    rec.onend = () => {
+      rec = null;
+      if (!want) return;
+      // הגנה מלולאת אתחול מהירה (למשל כשהמיקרופון תפוס)
+      fastFails = Date.now() - startedAt < 1500 ? fastFails + 1 : 0;
+      setTimeout(() => want && start(), fastFails > 3 ? 2000 : 100);
+    };
+    startedAt = Date.now();
+    try { rec.start(); status('listening', 'מקשיב'); } catch (err) { rec = null; status('error', String(err)); }
+  }
+
+  function stop() {
+    want = false;
+    if (rec) { try { rec.abort(); } catch {} rec = null; }
+    status('ready', 'מושהה');
+  }
+
+  const es = new EventSource('/bridge/events');
+  es.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    document.getElementById('log').textContent = JSON.stringify(m);
+    if (m.type === 'start') {
+      if (m.lang && m.lang !== lang) { lang = m.lang; if (rec) { try { rec.abort(); } catch {} rec = null; } }
+      want = true; start();
+    } else if (m.type === 'stop') stop();
+  };
+  status('ready', 'מוכן');
+})();
+</script>
+</body>
+</html>
