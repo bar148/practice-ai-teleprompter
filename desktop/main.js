@@ -69,6 +69,7 @@ function startBridgeServer() {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       sse = res;
       log('bridge connected');
+      hideBridgeWindow();
       req.on('close', () => { if (sse === res) { sse = null; log('bridge disconnected'); } });
       if (pending) { res.write(`data: ${JSON.stringify(pending)}\n\n`); pending = null; }
       return;
@@ -126,6 +127,29 @@ function killBridge() {
     else try { bridgeProc.kill(); } catch {}
     bridgeProc = null;
   }
+}
+
+// חלון ה-Edge המוסתר נמצא מחוץ למסך, אבל Windows עדיין מציג לו אייקון בשורת המשימות.
+// מסתירים אותו לגמרי (ShowWindow SW_HIDE) - הזיהוי ממשיך לעבוד, והאייקון נעלם גם משורת המשימות וגם מ-Alt+Tab.
+const HIDE_PS = `
+Add-Type @'
+using System; using System.Runtime.InteropServices; using System.Text;
+public class TPW {
+  public delegate bool P(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(P f, IntPtr l);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+  public static int HideAll(string t) { int n = 0; EnumWindows((h, l) => { var sb = new StringBuilder(256); GetWindowText(h, sb, 256);
+    if (IsWindowVisible(h) && sb.ToString().Contains(t)) { ShowWindow(h, 0); n++; } return true; }, IntPtr.Zero); return n; }
+}
+'@
+for ($i = 0; $i -lt 20; $i++) { if ([TPW]::HideAll('Teleprompter speech bridge') -gt 0) { 'hidden'; break }; Start-Sleep -Milliseconds 250 }
+`;
+function hideBridgeWindow() {
+  if (!IS_WIN) return;
+  execFile('powershell', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', HIDE_PS],
+    { windowsHide: true }, (err, out) => log(`hide bridge window: ${err ? 'error ' + err.message : (out || '').trim() || 'not found'}`));
 }
 
 // ---------------- לוג לאבחון (נכתב מחדש בכל הפעלה, נשאר רק במחשב) ----------------
