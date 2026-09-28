@@ -59,16 +59,42 @@ jobs:
             unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
             export CSC_IDENTITY_AUTO_DISCOVERY=false TP_ADHOC=1
             npx electron-builder --mac --publish never
+            # איחוד Apple Silicon + Intel לקובץ אחד משנה את הקבצים הבינאריים ושובר את החתימה - חותמים מחדש ובונים dmg מהאפליקציה החתומה
+            app="$(ls -d dist/mac-universal/*.app | head -1)"
+            codesign --force --deep --sign - "$app"
+            rm -f dist/*.dmg
+            npx electron-builder --mac dmg --universal --publish never --prepackaged "$app"
           fi
           ls -la dist
 
       - name: Verify app bundle
         working-directory: stage
         run: |
-          app="$(ls -d dist/mac-arm64/*.app | head -1)"
+          app="$(ls -d dist/mac-universal/*.app | head -1)"
           test -x "$app/Contents/Resources/tp-speech"
-          codesign --verify --deep --verbose=2 "$app"
+          lipo -info "$app/Contents/MacOS/Practice AI Teleprompter"
+          lipo -info "$app/Contents/Resources/tp-speech"
+          codesign --verify --deep --strict --verbose=2 "$app"
           plutil -p "$app/Contents/Info.plist" | grep -E "NSMicrophoneUsageDescription|NSSpeechRecognitionUsageDescription"
+
+      # פותחים את האפליקציה באמת על המק בענן: ממלאים טקסט, מתחילים, ובודקים שלא קרסה ושאין שגיאות
+      - name: Launch test
+        working-directory: stage
+        run: |
+          app="$(ls -d dist/mac-universal/*.app | head -1)"
+          printf 'שלום לכולם, זו בדיקה של הטלפרומפטר במק.
+' > "$RUNNER_TEMP/test.txt"
+          TP_AUTOTEST="$RUNNER_TEMP/test.txt" TP_SECONDS=15 TP_ENGINE=browser \n            "$app/Contents/MacOS/Practice AI Teleprompter" > "$RUNNER_TEMP/run.log" 2>&1 &
+          pid=$!
+          sleep 10
+          alive=no; kill -0 $pid 2>/dev/null && alive=yes
+          wait $pid; code=$?
+          echo "alive after 10s: $alive, exit code: $code"
+          grep -a "autotest" "$RUNNER_TEMP/run.log" | tail -5 || true
+          log="$HOME/Library/Application Support/Practice AI Teleprompter/teleprompter.log"
+          echo "--- app log:"; cat "$log" || true
+          test "$alive" = yes
+          ! grep -q "uncaught|spawn error" "$log"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -85,4 +111,8 @@ jobs:
               --title "טלפרומפטר פרקטי AI למק (בטא)" \
               --notes-file desktop/mac/RELEASE_NOTES.md
           fi
+          gh release edit "$TAG" --notes-file desktop/mac/RELEASE_NOTES.md
+          # מוחקים קבצי dmg ישנים (למשל arm64/x64 נפרדים) כדי שיישאר קובץ אחד ברור
+          for a in $(gh release view "$TAG" --json assets --jq '.assets[].name' | grep '.dmg
+); do gh release delete-asset "$TAG" "$a" -y; done
           gh release upload "$TAG" stage/dist/*.dmg --clobber

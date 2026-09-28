@@ -46,8 +46,7 @@
         {
           "target": "dmg",
           "arch": [
-            "arm64",
-            "x64"
+            "universal"
           ]
         }
       ],
@@ -66,11 +65,12 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "הטלפרומפטר מקשיב לקריאה שלך כדי לגלול את הטקסט",
         "NSSpeechRecognitionUsageDescription": "הטלפרומפטר מזהה את המילים שאתה מקריא כדי לדעת איפה אתה בטקסט"
-      }
+      },
+      "x64ArchFiles": "Contents/Resources/tp-speech"
     },
     "afterPack": "afterPack.js",
     "dmg": {
-      "artifactName": "Practice-AI-Teleprompter-${arch}.dmg",
+      "artifactName": "Practice-AI-Teleprompter-mac.dmg",
       "title": "Practice AI Teleprompter"
     }
   }

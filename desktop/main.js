@@ -17,6 +17,8 @@ const BOUNDS_FILE = () => path.join(app.getPath('userData'), 'float-bounds.json'
 let win = null;
 let mode = 'editor';
 
+process.on('uncaughtException', e => { try { log(`uncaught: ${e && e.stack || e}`); } catch {} });
+
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { if (win) { win.show(); win.focus(); } });
 
@@ -32,6 +34,7 @@ function startWhisper() {
   });
   const log = fs.createWriteStream(path.join(WHISPER_HOME, 'whisper.log'), { flags: 'w' });
   py.stdout.pipe(log); py.stderr.pipe(log);
+  py.on('error', e => { log(`whisper spawn error: ${e.message}`); py = null; });
   py.on('exit', () => { py = null; });
 }
 function stopWhisper() { if (py) { try { py.kill(); } catch {} py = null; } }
@@ -108,6 +111,8 @@ function launchBridge() {
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
   ], { stdio: 'ignore', detached: false });
   // התהליך שהפעלנו יכול להסתיים מיד אם Edge מעביר את החלון למופע קיים - לכן החיבור (sse) הוא הסימן שהגשר חי
+  // בלי מאזין לשגיאה, כישלון בהפעלה מפיל את כל האפליקציה עם חלון שגיאה
+  bridgeProc.on('error', e => { log(`bridge spawn error: ${e.message}`); bridgeProc = null; toRenderer({ type: 'status', state: 'error', msg: 'לא הצלחתי להפעיל את Edge/Chrome לזיהוי הדיבור' }); });
   bridgeProc.on('exit', code => { log(`bridge process exited (${code})`); bridgeProc = null; });
 }
 
@@ -181,6 +186,12 @@ function startMacHelper() {
     }
   });
   macHelper.stderr.on('data', d => log(`helper stderr: ${String(d).trim()}`));
+  macHelper.on('error', e => {
+    log(`mac helper spawn error: ${e.message}`);
+    macHelper = null;
+    toRenderer({ type: 'status', state: 'error', msg: 'רכיב זיהוי הדיבור לא נפתח - נסה להתקין מחדש' });
+  });
+  macHelper.stdin.on('error', e => log(`mac helper stdin error: ${e.message}`));
   macHelper.on('exit', code => { log(`mac helper exited (${code})`); macHelper = null; });
 }
 
