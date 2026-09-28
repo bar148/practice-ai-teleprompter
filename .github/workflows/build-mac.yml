@@ -55,6 +55,8 @@ jobs:
             npx electron-builder --mac --publish never -c.mac.notarize=true
           else
             echo "No Apple Developer secrets - ad-hoc signing"
+            # סודות שלא הוגדרו מגיעים כמחרוזת ריקה - electron-builder מנסה לפתוח אותה כקובץ תעודה
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
             export CSC_IDENTITY_AUTO_DISCOVERY=false TP_ADHOC=1
             npx electron-builder --mac --publish never
           fi
