@@ -6,6 +6,8 @@ import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -22,6 +24,7 @@ import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.DynamicRange
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
@@ -55,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
     private var cameraWanted = false
+    private var videoQuality = "fhd"
     private var afterPermission: (() -> Unit)? = null
     private var insetTop = 0f
     private var insetBottom = 0f
@@ -156,8 +160,16 @@ class MainActivity : AppCompatActivity() {
             val provider = future.get()
             cameraProvider = provider
             val prev = Preview.Builder().build().also { it.setSurfaceProvider(preview.surfaceProvider) }
+            // האיכות הכי גבוהה שהמצלמה הקדמית באמת תומכת בה, עם קצב נתונים גבוה (ברירת המחדל של הטלפון לפעמים נמוכה)
+            val front = CameraSelector.DEFAULT_FRONT_CAMERA.filter(provider.availableCameraInfos).firstOrNull()
+            val supported = front?.let { Recorder.getVideoCapabilities(it).getSupportedQualities(DynamicRange.SDR) } ?: emptyList()
+            val wanted = if (videoQuality == "uhd") listOf(Quality.UHD, Quality.FHD, Quality.HD) else listOf(Quality.FHD, Quality.HD)
+            val pick = wanted.firstOrNull { it in supported } ?: Quality.HIGHEST
+            val bitrate = if (pick == Quality.UHD) 35_000_000 else 16_000_000
+            log("front camera qualities: ${supported.joinToString { qName(it) }} -> using ${qName(pick)} @ ${bitrate / 1_000_000}Mbps")
             val recorder = Recorder.Builder()
-                .setQualitySelector(QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
+                .setQualitySelector(QualitySelector.from(pick, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
+                .setTargetVideoEncodingBitRate(bitrate)
                 .build()
             val vc = VideoCapture.withOutput(recorder)
             videoCapture = vc
@@ -206,14 +218,32 @@ class MainActivity : AppCompatActivity() {
                         log("recording error ${ev.error} ${ev.cause}")
                         js("onRecording('error', ${JSONObject.quote("שגיאה בשמירת הסרטון (${ev.error})")})")
                     } else {
-                        log("recording saved ${ev.outputResults.outputUri}")
-                        js("onRecording('saved', ${JSONObject.quote(name)})")
+                        val info = videoInfo(ev.outputResults.outputUri)
+                        log("recording saved ${ev.outputResults.outputUri} $info")
+                        js("onRecording('saved', ${JSONObject.quote(info)})")
                     }
                 }
                 else -> {}
             }
         }
     }
+
+    private fun qName(q: Quality) = when (q) {
+        Quality.UHD -> "4K"; Quality.FHD -> "FullHD"; Quality.HD -> "HD"; Quality.SD -> "SD"; else -> q.toString()
+    }
+
+    // רזולוציה וקצב נתונים של הסרטון שנשמר, למשל "1920x1080 15.8Mbps"
+    private fun videoInfo(uri: Uri): String = try {
+        val r = MediaMetadataRetriever()
+        r.setDataSource(this, uri)
+        val w = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+        val h = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+        val rot = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+        val br = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull() ?: 0L
+        r.release()
+        val (vw, vh) = if (rot % 180 != 0) h to w else w to h
+        "${vw}x${vh} ${"%.1f".format(br / 1_000_000.0)}Mbps"
+    } catch (e: Exception) { "unknown ($e)" }
 
     private fun saveText(fileName: String, content: String): Boolean {
         if (Build.VERSION.SDK_INT < 29) return false
@@ -264,8 +294,9 @@ class MainActivity : AppCompatActivity() {
         }.toString()
 
         @JavascriptInterface
-        fun camera(on: Boolean) = runOnUiThread {
+        fun camera(on: Boolean, quality: String) = runOnUiThread {
             cameraWanted = on
+            videoQuality = quality
             if (on) withPerms { startCamera() } else stopCamera()
         }
 

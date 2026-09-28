@@ -291,6 +291,12 @@
         <option value="direct">רגיל</option>
       </select>
     </label>
+    <label class="field android-only">איכות וידאו
+      <select id="s-vq">
+        <option value="fhd">Full HD - מומלץ</option>
+        <option value="uhd">4K (אם הטלפון תומך, קבצים גדולים)</option>
+      </select>
+    </label>
   </div>
 
   <div class="actions">
@@ -377,7 +383,7 @@
   const DEFAULTS = DESKTOP
     ? { ...COMMON, size: 34, width: 94, guide: 24, heard: true, opacity: 92, device: '', engine: 'browser', slides: false }
     : ANDROID
-      ? { ...COMMON, size: 30, width: 94, guide: 22, heard: true, micMode: 'shared' }
+      ? { ...COMMON, size: 30, width: 94, guide: 22, heard: true, micMode: 'shared', videoQuality: 'fhd' }
       : { ...COMMON, size: 56, width: 80, guide: 35, heard: true };
   const settings = Object.assign({}, DEFAULTS, store.get(SETTINGS_KEY, {}));
   if ((settings.v || 1) < 2) { settings.heard = true; settings.v = 2; }   // 1.0.1: שורת "מה שומע" מופעלת כברירת מחדל
@@ -1193,12 +1199,12 @@
     keepAwake(true);
     setPlayUI('off', '');
     poke();
-    if (ANDROID) window.AndroidTP.camera(true);
+    if (ANDROID) window.AndroidTP.camera(true, settings.videoQuality || 'fhd');
     else play();
   }
 
   function closePrompter() {
-    if (ANDROID) { if (recOn) window.AndroidTP.stopRecording(); window.AndroidTP.camera(false); }
+    if (ANDROID) { if (recOn) window.AndroidTP.stopRecording(); window.AndroidTP.camera(false, settings.videoQuality || 'fhd'); }
     if (running()) pause();
     stopListening(); stopFixed();
     saveSession();
@@ -1300,6 +1306,8 @@
     if (!ainfo.sharedAudio) { $('s-micmode').value = 'direct'; $('s-micmode').disabled = true; settings.micMode = 'direct'; }
     else $('s-micmode').value = settings.micMode || 'shared';
     $('s-micmode').addEventListener('change', e => { settings.micMode = e.target.value; saveSettings(); });
+    $('s-vq').value = settings.videoQuality || 'fhd';
+    $('s-vq').addEventListener('change', e => { settings.videoQuality = e.target.value; saveSettings(); });
     if (ainfo.recognizer === false) { const w = $('support-warning'); w.textContent = 'לא נמצא בטלפון שירות זיהוי דיבור. צריך את אפליקציית Google (אפשר עדיין להשתמש במהירות קבועה).'; w.classList.remove('hidden'); }
     $('send-log').addEventListener('click', () => window.AndroidTP.shareLog());
     $('rec-btn').addEventListener('click', () => {
@@ -1327,7 +1335,11 @@
     },
     onRecording: (state, info) => {
       if (state === 'started') { recOn = true; recArmed = false; }
-      else if (state === 'saved') { recOn = false; toast('✓ הסרטון נשמר בגלריה (Practice AI)'); }
+      else if (state === 'saved') {
+        recOn = false;
+        const res = (info || '').split(' ')[0];
+        toast(/^d+xd+$/.test(res) ? `✓ נשמר בגלריה · ${res.replace('x', '×')}` : '✓ הסרטון נשמר בגלריה (Practice AI)');
+      }
       else if (state === 'error') { recOn = false; recArmed = false; toast(info || 'שגיאה בהקלטה'); }
       setRecUI();
     },
