@@ -7,3 +7,8 @@ desktop/index.html
 *.log
 __pycache__/
 .venv/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/assets/index.html
+android/local.properties

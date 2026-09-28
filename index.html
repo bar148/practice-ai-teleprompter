@@ -175,6 +175,30 @@
   #meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .1s; }
   #opacity { width: 60px; accent-color: var(--accent); }
 
+  /* ---------- אנדרואיד: המצלמה מאחור, הטקסט למעלה ליד העדשה ---------- */
+  .android-only { display: none !important; }
+  body.android .android-only { display: flex !important; }
+  body.android .web-only, body.android .desktop-only { display: none !important; }
+  /* הדף עצמו שקוף כדי שהמצלמה (שמאחורי ה-WebView) תיראה; מסך העריכה מקבל רקע משלו */
+  html.android, body.android { background: transparent; background-image: none; }
+  body.android #editor { background: var(--bg); max-width: none; min-height: 100%; height: auto; }
+  body.android #editor { padding-top: calc(var(--safe-top, 0px) + 12px); padding-bottom: calc(var(--safe-bottom, 0px) + 12px); }
+  body.android #prompter { background: transparent; }
+  body.android #stage { bottom: auto; top: 0; height: calc(46% + var(--safe-top, 0px)); padding-top: var(--safe-top, 0px);
+    background: rgba(6, 3, 13, .80); border-bottom: 1px solid rgba(var(--accent-rgb), .35); }
+  body.android #fade-top { height: 10%; }
+  body.android #fade-bottom { height: 20%; }
+  body.android #hud { top: auto; bottom: 0; padding: 10px 10px calc(var(--safe-bottom, 0px) + 12px); gap: 6px; justify-content: center;
+    background: linear-gradient(transparent, rgba(0, 0, 0, .85)); }
+  body.android #prompter.idle #hud { opacity: 1; }
+  body.android #prompter.idle { cursor: auto; }
+  body.android #timer { margin-inline-start: 0; }
+  body.android #mini-play { display: none; }
+  body.android #heard { bottom: auto; top: calc(46% + var(--safe-top, 0px) + 8px); font-size: 13px; }
+  body.android #rec-btn { background: #d7263d; border-color: #ff6b7d; color: #fff; font-weight: 700; padding: 10px 20px; font-size: 16px; }
+  body.android #rec-btn.on { background: #fff; color: #d7263d; animation: pulse 1.6s infinite; }
+  body.android #toast { bottom: 22%; }
+
   @media (max-width: 640px) {
     #editor h1 { font-size: 20px; }
     .hint { display: none; }
@@ -261,12 +285,19 @@
     <label class="field check desktop-only"><input type="checkbox" id="s-slides"> להעביר שקף במצגת ב-[שקף]</label>
     <label class="field check web-only"><input type="checkbox" id="s-mirror"> היפוך מראה (לזכוכית טלפרומפטר)</label>
     <label class="field check"><input type="checkbox" id="s-heard"> להציג מה המיקרופון שומע</label>
+    <label class="field android-only">מיקרופון בזמן הקלטה
+      <select id="s-micmode">
+        <option value="shared">משותף - מומלץ (אנדרואיד 13 ומעלה)</option>
+        <option value="direct">רגיל</option>
+      </select>
+    </label>
   </div>
 
   <div class="actions">
     <button class="btn primary" id="go">▶ התחל</button>
     <button class="btn" id="export-open" disabled title="כתוביות, פרקים וסימוני טייקים מההקראה האחרונה">⤓ ייצוא מההקראה האחרונה</button>
     <span id="engine-status" class="desktop-only"></span>
+    <button class="btn android-only" id="send-log">שליחת לוג לתמיכה</button>
     <span class="hint web-only">רווח = הפעלה · חיצים = שורה · K = סמן טייק פסול · Esc = חזרה</span>
     <span class="hint desktop-only" id="hotkey-hint"></span>
   </div>
@@ -290,6 +321,7 @@
       <span class="stat" id="speed-v"></span>
       <button class="hud-btn" id="faster" title="מהר יותר">+</button>
     </span>
+    <button class="hud-btn android-only" id="rec-btn">● הקלט</button>
     <button class="hud-btn" id="mark-btn" title="סמן טייק פסול (K)">⚑ טייק פסול</button>
     <button class="hud-btn" id="restart" title="חזרה להתחלה (Home)">⟲</button>
     <button class="hud-btn" id="smaller" title="הקטן טקסט">א−</button>
@@ -337,12 +369,16 @@
   };
 
   const DESKTOP = !!window.desktop;
+  const ANDROID = !!window.AndroidTP;
   if (DESKTOP) document.body.classList.add('desktop');
-  const SETTINGS_KEY = DESKTOP ? 'tp-settings-desktop' : 'tp-settings';
+  if (ANDROID) { document.body.classList.add('android'); document.documentElement.classList.add('android'); }
+  const SETTINGS_KEY = DESKTOP ? 'tp-settings-desktop' : ANDROID ? 'tp-settings-android' : 'tp-settings';
   const COMMON = { lang: 'he-IL', mode: 'voice', wpm: 130, countdown: true, mirror: false };
   const DEFAULTS = DESKTOP
     ? { ...COMMON, size: 34, width: 94, guide: 24, heard: true, opacity: 92, device: '', engine: 'browser', slides: false }
-    : { ...COMMON, size: 56, width: 80, guide: 35, heard: true };
+    : ANDROID
+      ? { ...COMMON, size: 30, width: 94, guide: 22, heard: true, micMode: 'shared' }
+      : { ...COMMON, size: 56, width: 80, guide: 35, heard: true };
   const settings = Object.assign({}, DEFAULTS, store.get(SETTINGS_KEY, {}));
   if ((settings.v || 1) < 2) { settings.heard = true; settings.v = 2; }   // 1.0.1: שורת "מה שומע" מופעלת כברירת מחדל
   const saveSettings = () => store.set(SETTINGS_KEY, settings);
@@ -571,7 +607,7 @@
     const w = words[Math.min(i, words.length - 1)];
     return w ? w.el.offsetTop : 0;
   }
-  function guidePx() { return window.innerHeight * settings.guide / 100; }
+  function guidePx() { return ($('stage').clientHeight || window.innerHeight) * settings.guide / 100; }
   function retarget() {
     targetY = words.length ? lineTop(pos) - guidePx() : 0;
     if (!rafOn) { rafOn = true; requestAnimationFrame(tick); }
@@ -716,6 +752,7 @@
   }
 
   function download(name, text) {
+    if (ANDROID) { toast(window.AndroidTP.saveText(name, text) ? 'נשמר בתיקיית ההורדות (Practice AI)' : 'השמירה נכשלה'); return; }
     const blob = new Blob(['﻿' + text], { type: 'text/plain;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name;
@@ -760,7 +797,7 @@
   // web: זיהוי הדיבור של הדפדפן | browser: אותו דבר דרך חלון Edge/Chrome מוסתר (דסקטופ) | whisper: מקומי
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let listening = false;
-  const engineName = () => DESKTOP ? settings.engine : 'web';
+  const engineName = () => ANDROID ? 'android' : DESKTOP ? settings.engine : 'web';
 
   // קיצורי המקלדת שהאפליקציה קיבלה בפועל (דסקטופ) - מה שמוצג למשתמש תמיד תואם למה שעובד
   const DINFO = DESKTOP ? window.desktop.info() : {};
@@ -786,8 +823,8 @@
     b.classList.toggle('on', state === 'on');
     b.classList.toggle('err', state === 'err');
     const fixed = settings.mode === 'fixed';
-    const stopKey = prettyKey(keys.toggle);
-    $('play-label').textContent = state === 'on' ? (fixed ? `❚❚ עצור (${stopKey})` : `מקשיב… (${stopKey} לעצירה)`) : (fixed ? '▶ נגן' : 'הפעל מיקרופון');
+    const stopKey = ANDROID ? '' : prettyKey(keys.toggle);
+    $('play-label').textContent = state === 'on' ? (fixed ? (stopKey ? `❚❚ עצור (${stopKey})` : '❚❚ עצור') : (stopKey ? `מקשיב… (${stopKey} לעצירה)` : 'מקשיב…')) : (fixed ? '▶ נגן' : 'הפעל מיקרופון');
     $('mini-play').classList.toggle('on', state === 'on');
     $('mini-play').textContent = state === 'on' ? '❚❚' : '▶';
     $('meter').classList.toggle('on', !fixed && state === 'on' && engineName() === 'whisper');
@@ -881,6 +918,7 @@
     const e = engineName();
     if (e === 'web') return webStart();
     setPlayUI('on', '');
+    if (e === 'android') { window.AndroidTP.startListening(settings.lang, settings.micMode || 'shared'); return; }
     if (e === 'whisper') {
       if (whisperState === 'loading') setPlayUI('on', 'המודל נטען…');
       connectWhisper(); whisperSend();
@@ -889,6 +927,7 @@
   function stopListening() {
     listening = false;
     webStop();
+    if (ANDROID) window.AndroidTP.stopListening();
     if (DESKTOP) {
       if (wsReady) ws.send(JSON.stringify({ type: 'stop' }));
       window.desktop.engine({ type: 'stop' });
@@ -918,10 +957,11 @@
   let keyTipShown = false;
   function beginRun() {
     if (session && session.t0 == null) session.t0 = now();
-    if (!keyTipShown) { keyTipShown = true; setTimeout(() => toast(`לעצירה: ${prettyKey(keys.toggle)} או הכפתור בפינה`), 400); }
+    if (ANDROID) beginRecordingNow();
+    if (!keyTipShown && !ANDROID) { keyTipShown = true; setTimeout(() => toast(`לעצירה: ${prettyKey(keys.toggle)} או הכפתור בפינה`), 400); }
     if (settings.mode === 'fixed') startFixed(); else startListening();
   }
-  const uiLog = (msg) => { if (DESKTOP && window.desktop.log) window.desktop.log(msg); };
+  const uiLog = (msg) => { if (DESKTOP && window.desktop.log) window.desktop.log(msg); if (ANDROID) window.AndroidTP.log(msg); };
   function play(src) {
     uiLog(`play (${src || '?'}) running=${running()} counting=${counting} pos=${pos}`);
     if (running() || counting) return;
@@ -1043,7 +1083,7 @@
     root.style.setProperty('--font-size', settings.size + 'px');
     root.style.setProperty('--text-width', settings.width + '%');
     root.style.setProperty('--guide', settings.guide + '%');
-    content.style.setProperty('--guide-px', settings.guide + 'vh');
+    content.style.setProperty('--guide-px', guidePx() + 'px');
     $('stage').classList.toggle('mirror', !DESKTOP && settings.mirror);
     $('heard').classList.toggle('hidden', !settings.heard);
     $('s-size-v').textContent = settings.size;
@@ -1153,10 +1193,12 @@
     keepAwake(true);
     setPlayUI('off', '');
     poke();
-    play();
+    if (ANDROID) window.AndroidTP.camera(true);
+    else play();
   }
 
   function closePrompter() {
+    if (ANDROID) { if (recOn) window.AndroidTP.stopRecording(); window.AndroidTP.camera(false); }
     if (running()) pause();
     stopListening(); stopFixed();
     saveSession();
@@ -1239,7 +1281,7 @@
   }
   document.addEventListener('mousemove', poke);
 
-  window.addEventListener('resize', () => requestAnimationFrame(retarget));
+  window.addEventListener('resize', () => requestAnimationFrame(() => { content.style.setProperty('--guide-px', guidePx() + 'px'); retarget(); }));
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && promptOpen()) keepAwake(true);
   });
@@ -1249,6 +1291,57 @@
     const ping = () => fetch('/ping', { cache: 'no-store' }).catch(() => {});
     ping(); setInterval(ping, 10000);
   }
+
+  // ---------------- אנדרואיד: הקלטה וקריאות מהטלפון ----------------
+  let recOn = false, recArmed = false;
+  if (ANDROID) {
+    const ainfo = (() => { try { return JSON.parse(window.AndroidTP.info()); } catch { return {}; } })();
+    uiLog(`web ready, android sdk ${ainfo.sdk}, recognizer=${ainfo.recognizer}`);
+    if (!ainfo.sharedAudio) { $('s-micmode').value = 'direct'; $('s-micmode').disabled = true; settings.micMode = 'direct'; }
+    else $('s-micmode').value = settings.micMode || 'shared';
+    $('s-micmode').addEventListener('change', e => { settings.micMode = e.target.value; saveSettings(); });
+    if (ainfo.recognizer === false) { const w = $('support-warning'); w.textContent = 'לא נמצא בטלפון שירות זיהוי דיבור. צריך את אפליקציית Google (אפשר עדיין להשתמש במהירות קבועה).'; w.classList.remove('hidden'); }
+    $('send-log').addEventListener('click', () => window.AndroidTP.shareLog());
+    $('rec-btn').addEventListener('click', () => {
+      if (recOn || recArmed) {
+        recArmed = false;
+        window.AndroidTP.stopRecording();
+        if (running()) pause('rec');
+      } else {
+        recArmed = true;
+        if (running()) beginRecordingNow(); else play('rec');
+      }
+    });
+  }
+  function beginRecordingNow() { if (ANDROID && recArmed && !recOn) window.AndroidTP.startRecording(); }
+  function setRecUI() {
+    $('rec-btn').classList.toggle('on', recOn);
+    $('rec-btn').textContent = recOn ? '■ עצור הקלטה' : '● הקלט';
+  }
+  window.tpNative = {
+    onText: t => onHeard(t),
+    onStatus: (state, msg) => {
+      if (state === 'error') { engineError(msg); toast(msg); }
+      else if (state === 'listening') setPlayUI('on', msg === 'מקשיב' ? '' : msg);
+      else if (state === 'ready' && listening) { listening = false; setPlayUI('off', ''); }
+    },
+    onRecording: (state, info) => {
+      if (state === 'started') { recOn = true; recArmed = false; }
+      else if (state === 'saved') { recOn = false; toast('✓ הסרטון נשמר בגלריה (Practice AI)'); }
+      else if (state === 'error') { recOn = false; recArmed = false; toast(info || 'שגיאה בהקלטה'); }
+      setRecUI();
+    },
+    setInsets: (top, bottom) => {
+      root.style.setProperty('--safe-top', top + 'px');
+      root.style.setProperty('--safe-bottom', bottom + 'px');
+      requestAnimationFrame(() => { applySettings(); retarget(); });
+    },
+    onBack: () => {
+      if ($('export-dlg').open) $('export-dlg').close();
+      else if (promptOpen()) closePrompter();
+      else window.AndroidTP.exitApp();
+    },
+  };
 
   applySettings();
   loadScript(lib.current);

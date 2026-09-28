@@ -1,0 +1,82 @@
+# בונה את אפליקציית האנדרואיד (APK) בענן ומעלה אותה לדף הורדה.
+# הפעלה: Actions > Build Android > Run workflow.
+# חתימה: הסודות ANDROID_KEYSTORE_B64 + ANDROID_KEYSTORE_PASSWORD (אותו מפתח בכל גרסה, כדי שעדכון יותקן מעל הקודם).
+name: Build Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "דף ההורדה להעלאה (ייווצר כגרסת בטא אם לא קיים)"
+        default: "android-beta"
+        required: true
+      version_name:
+        description: "מספר גרסה"
+        default: "0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Copy the teleprompter UI into the app
+        run: |
+          mkdir -p android/app/src/main/assets
+          cp index.html android/app/src/main/assets/index.html
+
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No signing key secret - building with a debug key"
+          fi
+
+      - name: Build APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Name the APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk out/Practice-AI-Teleprompter.apk
+          ls -la out
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs out/Practice-AI-Teleprompter.apk | head -3 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: out/*.apk
+
+      - name: Upload to release page
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+              --title "טלפרומפטר פרקטי AI לאנדרואיד (בטא)" \
+              --notes-file android/RELEASE_NOTES.md
+          fi
+          gh release upload "$TAG" out/Practice-AI-Teleprompter.apk --clobber
