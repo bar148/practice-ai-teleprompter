@@ -55,10 +55,19 @@
     status('ready', 'מושהה');
   }
 
+  // אם האפליקציה נסגרה (השרת נעלם) - החלון המוסתר סוגר את עצמו, כדי שלא יישאר Edge יתום
+  let lostSince = 0;
   const es = new EventSource('/bridge/events');
+  es.onopen = () => { lostSince = 0; };
+  es.onerror = () => {
+    if (!lostSince) lostSince = Date.now();
+    else if (Date.now() - lostSince > 6000) { stop(); window.close(); }
+  };
+  setInterval(() => { if (lostSince && Date.now() - lostSince > 6000) { stop(); window.close(); } }, 2000);
   es.onmessage = ev => {
     const m = JSON.parse(ev.data);
     document.getElementById('log').textContent = JSON.stringify(m);
+    if (m.type === 'quit') { stop(); window.close(); return; }
     if (m.type === 'start') {
       if (m.lang && m.lang !== lang) { lang = m.lang; if (rec) { try { rec.abort(); } catch {} rec = null; } }
       want = true; start();

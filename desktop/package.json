@@ -1,7 +1,7 @@
 {
   "name": "voice-teleprompter",
   "productName": "Practice AI Teleprompter",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "טלפרומפטר קולי של פרקטי AI - גולל לפי הקול שלך ומוסתר מהקלטות מסך",
   "author": "Bar Shaltiel",
   "license": "MIT",

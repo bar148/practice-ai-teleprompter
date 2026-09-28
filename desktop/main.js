@@ -4,7 +4,7 @@ const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electro
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
-const { spawn, execFile } = require('child_process');
+const { spawn, spawnSync, execFile } = require('child_process');
 
 // בהתקנה הקבצים יושבים ליד main.js; בפיתוח - בתיקייה שמעל
 const APP_DIR = fs.existsSync(path.join(__dirname, 'index.html')) ? __dirname : path.join(__dirname, '..');
@@ -68,7 +68,8 @@ function startBridgeServer() {
     if (req.url === '/bridge/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       sse = res;
-      req.on('close', () => { if (sse === res) sse = null; });
+      log('bridge connected');
+      req.on('close', () => { if (sse === res) { sse = null; log('bridge disconnected'); } });
       if (pending) { res.write(`data: ${JSON.stringify(pending)}\n\n`); pending = null; }
       return;
     }
@@ -79,6 +80,7 @@ function startBridgeServer() {
         res.writeHead(204); res.end();
         let m; try { m = JSON.parse(body); } catch { return; }
         if (process.env.TP_AUTOTEST) console.log(`[bridge] ${req.url} ${body}`);
+        log(req.url === '/bridge/text' ? `heard: ${m.text}` : `bridge ${m.state}: ${m.msg}`);
         if (req.url === '/bridge/text') toRenderer({ type: 'text', text: m.text });
         else if (req.url === '/bridge/status') toRenderer({ type: 'status', state: m.state, msg: m.msg });
       });
@@ -89,10 +91,13 @@ function startBridgeServer() {
   srv.listen(0, '127.0.0.1', () => { bridgePort = srv.address().port; launchBridge(); });
 }
 
+let launchedAt = 0;
 function launchBridge() {
-  if (bridgeProc || !bridgePort) return;
+  if (!bridgePort) return;
   const exe = findBrowser();
-  if (!exe) { toRenderer({ type: 'status', state: 'error', msg: 'לא נמצא Edge או Chrome במחשב' }); return; }
+  if (!exe) { log('no Edge/Chrome found'); toRenderer({ type: 'status', state: 'error', msg: 'לא נמצא Edge או Chrome במחשב' }); return; }
+  launchedAt = Date.now();
+  log(`launching bridge: ${exe}`);
   bridgeProc = spawn(exe, [
     `--user-data-dir=${path.join(app.getPath('userData'), 'speech-bridge')}`,
     `--app=http://127.0.0.1:${bridgePort}/bridge`,
@@ -101,21 +106,35 @@ function launchBridge() {
     '--no-first-run', '--no-default-browser-check', '--disable-extensions',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
   ], { stdio: 'ignore', detached: false });
-  bridgeProc.on('exit', () => { bridgeProc = null; sse = null; });
+  // התהליך שהפעלנו יכול להסתיים מיד אם Edge מעביר את החלון למופע קיים - לכן החיבור (sse) הוא הסימן שהגשר חי
+  bridgeProc.on('exit', code => { log(`bridge process exited (${code})`); bridgeProc = null; });
 }
 
 function bridgeSend(msg) {
-  if (!bridgeProc) launchBridge();
-  if (sse) sse.write(`data: ${JSON.stringify(msg)}\n\n`);
-  else pending = msg;   // יישלח ברגע שהחלון המוסתר יתחבר
+  log(`engine ${msg.type}${msg.lang ? ' ' + msg.lang : ''}`);
+  if (sse) { sse.write(`data: ${JSON.stringify(msg)}\n\n`); return; }
+  pending = msg;   // יישלח ברגע שהחלון המוסתר יתחבר
+  if (Date.now() - launchedAt > 8000) launchBridge();
 }
 
 function killBridge() {
-  if (!bridgeProc) return;
-  const pid = bridgeProc.pid;
-  if (IS_WIN) execFile('taskkill', ['/pid', String(pid), '/T', '/F'], () => {});
-  else try { bridgeProc.kill(); } catch {}
-  bridgeProc = null;
+  // קודם מבקשים מהחלון המוסתר להיסגר, ואז סוגרים את התהליך בכוח - באופן סינכרוני, לפני שהאפליקציה יוצאת
+  if (sse) try { sse.write(`data: ${JSON.stringify({ type: 'quit' })}\n\n`); } catch {}
+  if (bridgeProc) {
+    const pid = bridgeProc.pid;
+    if (IS_WIN) spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+    else try { bridgeProc.kill(); } catch {}
+    bridgeProc = null;
+  }
+}
+
+// ---------------- לוג לאבחון (נכתב מחדש בכל הפעלה, נשאר רק במחשב) ----------------
+let logStream = null;
+function log(line) {
+  try {
+    if (!logStream) logStream = fs.createWriteStream(path.join(app.getPath('userData'), 'teleprompter.log'), { flags: 'w' });
+    logStream.write(`${new Date().toISOString().slice(11, 23)} ${line}\n`);
+  } catch {}
 }
 
 // ---------------- מקש למצגת ----------------
@@ -158,7 +177,9 @@ function setMode(m, opts = {}) {
     win.setBounds(loadFloatBounds());
     // כשמעבירים שקפים - החלון לא לוקח פוקוס, כדי שהמצגת תקבל את המקשים
     win.setFocusable(!opts.noFocus);
+    registerHotkeys();
   } else {
+    unregisterHotkeys();
     win.setFocusable(true);
     win.setAlwaysOnTop(false);
     win.setOpacity(1);
@@ -216,6 +237,7 @@ function runAutotest(textFile) {
 }
 
 ipcMain.on('info', e => { e.returnValue = { whisper: fs.existsSync(PY), browser: !!findBrowser(), platform: process.platform }; });
+ipcMain.on('log', (_e, line) => log(`ui: ${line}`));
 ipcMain.on('set-mode', (_e, m, opts) => win && setMode(m, opts || {}));
 ipcMain.on('set-opacity', (_e, v) => win && mode === 'float' && win.setOpacity(Math.max(0.3, Math.min(1, v))));
 ipcMain.on('minimize', () => win && win.minimize());
@@ -224,22 +246,48 @@ ipcMain.on('engine', (_e, msg) => bridgeSend(msg));
 ipcMain.on('whisper', (_e, on) => (on ? startWhisper() : stopWhisper()));
 ipcMain.on('send-key', (_e, key) => sendKey(key));
 
+// קיצורים גלובליים - פעילים רק בזמן ההקראה (בחלון הצף), כדי לא לתפוס מקשים מתוכנות אחרות סתם.
+// לכל פעולה יש חלופות: אם תוכנה אחרת כבר תפסה צירוף (למשל Ctrl+Alt+Space של אפליקציית Claude), עוברים לבא בתור.
+const HOTKEYS = {
+  toggle: ['F9', 'Control+Shift+Space', 'MediaPlayPause'],
+  mark: ['F10', 'Control+Shift+M'],
+  next: ['Control+Alt+Down', 'Control+Shift+Down'],
+  prev: ['Control+Alt+Up', 'Control+Shift+Up'],
+  hide: ['Control+Alt+H', 'Control+Shift+H'],
+};
+let activeKeys = {};
+
+function onHotkey(action) {
+  if (!win) return;
+  log(`hotkey ${action}`);
+  if (action === 'hide') { win.isVisible() ? win.hide() : win.showInactive(); return; }
+  if (!win.isVisible()) win.showInactive();
+  win.webContents.send('hotkey', action);
+}
+
 function registerHotkeys() {
-  const send = a => win && win.webContents.send('hotkey', a);
-  globalShortcut.register('Control+Alt+Space', () => send('toggle'));
-  globalShortcut.register('Control+Alt+Down', () => send('next'));
-  globalShortcut.register('Control+Alt+Up', () => send('prev'));
-  globalShortcut.register('Control+Alt+M', () => send('mark'));
-  globalShortcut.register('Control+Alt+H', () => {
-    if (!win) return;
-    win.isVisible() ? win.hide() : win.showInactive();
-  });
+  globalShortcut.unregisterAll();
+  activeKeys = {};
+  for (const [action, list] of Object.entries(HOTKEYS)) {
+    for (const acc of list) {
+      let ok = false;
+      try { ok = globalShortcut.register(acc, () => onHotkey(action)); } catch {}
+      if (ok) { activeKeys[action] = acc; break; }
+    }
+  }
+  log(`hotkeys: ${JSON.stringify(activeKeys)}`);
+  if (win) win.webContents.send('hotkeys', activeKeys);
+}
+
+function unregisterHotkeys() {
+  globalShortcut.unregisterAll();
+  activeKeys = {};
 }
 
 app.whenReady().then(() => {
+  log(`app ${app.getVersion()} start, ${process.platform}, browser: ${findBrowser()}`);
   startBridgeServer();
   createWindow();
-  registerHotkeys();
 });
 
 app.on('will-quit', () => {

@@ -120,6 +120,13 @@
   #heard { position: absolute; bottom: 14px; inset-inline: 0; text-align: center; color: rgba(255,255,255,.45);
     font-size: 18px; padding: 0 16px; z-index: 5; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #bar { position: absolute; bottom: 0; right: 0; height: 3px; background: var(--grad); width: 0; transition: width .4s; z-index: 6; }
+  /* כפתור הפעלה/עצירה שתמיד גלוי - גם כשהסרגל העליון מוסתר */
+  #mini-play { position: absolute; left: 12px; bottom: 12px; z-index: 7; width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; color: var(--text);
+    background: rgba(21, 15, 38, .88); border: 1px solid rgba(var(--accent-rgb), .55); padding: 0; }
+  #mini-play:hover { background: rgba(var(--accent-rgb), .3); }
+  #mini-play.on { border-color: var(--ok); color: var(--ok); animation: pulse 1.6s infinite; }
+  #prompter.idle #mini-play { cursor: pointer; }
   #countdown { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 8;
     background: rgba(0,0,0,.55); color: var(--accent); font-size: min(55vh, 220px); font-weight: 700; pointer-events: none; }
   #toast { position: absolute; left: 50%; bottom: 18%; transform: translateX(-50%); z-index: 9; pointer-events: none;
@@ -160,6 +167,9 @@
   body.desktop #fade-bottom { height: 30%; }
   body.desktop #prompter { border: 1px solid rgba(var(--accent-rgb), .25); border-radius: 8px; }
   body.desktop #toast { bottom: 10%; font-size: 12px; padding: 5px 12px; }
+  body.desktop #heard { font-size: 12px; bottom: 7px; color: rgba(240,232,255,.5); padding: 0 44px; }
+  body.desktop #mini-play { -webkit-app-region: no-drag; width: 28px; height: 28px; left: 7px; bottom: 6px; font-size: 11px; }
+  body.desktop #heard:not(:empty)::before { content: "🎙 "; }
   #meter { width: 30px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.12); overflow: hidden; display: none; }
   body.desktop #meter.on { display: block; }
   #meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .1s; }
@@ -258,7 +268,7 @@
     <button class="btn" id="export-open" disabled title="כתוביות, פרקים וסימוני טייקים מההקראה האחרונה">⤓ ייצוא מההקראה האחרונה</button>
     <span id="engine-status" class="desktop-only"></span>
     <span class="hint web-only">רווח = הפעלה · חיצים = שורה · K = סמן טייק פסול · Esc = חזרה</span>
-    <span class="hint desktop-only">מכל תוכנה: Ctrl+Alt+רווח = הפעלה · Ctrl+Alt+חיצים = שורה · Ctrl+Alt+M = טייק פסול · Ctrl+Alt+H = הסתר</span>
+    <span class="hint desktop-only" id="hotkey-hint"></span>
   </div>
 </section>
 
@@ -295,6 +305,7 @@
   </div>
 
   <div id="heard"></div>
+  <button id="mini-play" title="הפעלה / עצירה">▶</button>
   <div id="countdown" class="hidden"></div>
   <div id="toast"></div>
   <div id="bar"></div>
@@ -330,9 +341,10 @@
   const SETTINGS_KEY = DESKTOP ? 'tp-settings-desktop' : 'tp-settings';
   const COMMON = { lang: 'he-IL', mode: 'voice', wpm: 130, countdown: true, mirror: false };
   const DEFAULTS = DESKTOP
-    ? { ...COMMON, size: 34, width: 94, guide: 24, heard: false, opacity: 92, device: '', engine: 'browser', slides: false }
+    ? { ...COMMON, size: 34, width: 94, guide: 24, heard: true, opacity: 92, device: '', engine: 'browser', slides: false }
     : { ...COMMON, size: 56, width: 80, guide: 35, heard: true };
   const settings = Object.assign({}, DEFAULTS, store.get(SETTINGS_KEY, {}));
+  if ((settings.v || 1) < 2) { settings.heard = true; settings.v = 2; }   // 1.0.1: שורת "מה שומע" מופעלת כברירת מחדל
   const saveSettings = () => store.set(SETTINGS_KEY, settings);
 
   const $ = id => document.getElementById(id);
@@ -750,12 +762,28 @@
   let listening = false;
   const engineName = () => DESKTOP ? settings.engine : 'web';
 
+  // קיצורי המקלדת שהאפליקציה קיבלה בפועל (דסקטופ) - מה שמוצג למשתמש תמיד תואם למה שעובד
+  let keys = DESKTOP ? { toggle: 'F9', mark: 'F10', next: 'Control+Alt+Down', prev: 'Control+Alt+Up', hide: 'Control+Alt+H' } : { toggle: 'Space' };
+  const prettyKey = k => !k ? 'לא זמין' : k.replace('Control', 'Ctrl').replace('MediaPlayPause', '⏯').replace('Space', 'רווח')
+    .replace('Down', '↓').replace('Up', '↑').split('+').join('+');
+  function updateKeyHints() {
+    const t = prettyKey(keys.toggle);
+    $('play-btn').title = `הפעלה / עצירה (${t})`;
+    $('mini-play').title = `הפעלה / עצירה (${t})`;
+    $('mark-btn').title = `סמן טייק פסול (${DESKTOP ? prettyKey(keys.mark) : 'K'})`;
+    if (DESKTOP) $('hotkey-hint').textContent =
+      `בזמן ההקראה, מכל תוכנה: ${t} = הפעלה/עצירה · ${prettyKey(keys.prev)} / ${prettyKey(keys.next)} = שורה · ${prettyKey(keys.mark)} = טייק פסול · ${prettyKey(keys.hide)} = הסתר`;
+  }
+
   function setPlayUI(state, msg) {
     const b = $('play-btn');
     b.classList.toggle('on', state === 'on');
     b.classList.toggle('err', state === 'err');
     const fixed = settings.mode === 'fixed';
-    $('play-label').textContent = state === 'on' ? (fixed ? '❚❚ עצור' : 'מקשיב…') : (fixed ? '▶ נגן' : 'הפעל מיקרופון');
+    const stopKey = prettyKey(keys.toggle);
+    $('play-label').textContent = state === 'on' ? (fixed ? `❚❚ עצור (${stopKey})` : `מקשיב… (${stopKey} לעצירה)`) : (fixed ? '▶ נגן' : 'הפעל מיקרופון');
+    $('mini-play').classList.toggle('on', state === 'on');
+    $('mini-play').textContent = state === 'on' ? '❚❚' : '▶';
     $('meter').classList.toggle('on', !fixed && state === 'on' && engineName() === 'whisper');
     if (msg !== undefined) $('status').textContent = msg;
   }
@@ -881,11 +909,15 @@
   // ---------------- הפעלה / עצירה ----------------
   const running = () => settings.mode === 'fixed' ? fixedOnNow() : listening;
   let counting = false;
+  let keyTipShown = false;
   function beginRun() {
     if (session && session.t0 == null) session.t0 = now();
+    if (!keyTipShown) { keyTipShown = true; setTimeout(() => toast(`לעצירה: ${prettyKey(keys.toggle)} או הכפתור בפינה`), 400); }
     if (settings.mode === 'fixed') startFixed(); else startListening();
   }
-  function play() {
+  const uiLog = (msg) => { if (DESKTOP && window.desktop.log) window.desktop.log(msg); };
+  function play(src) {
+    uiLog(`play (${src || '?'}) running=${running()} counting=${counting} pos=${pos}`);
     if (running() || counting) return;
     const needCount = settings.countdown && (!session || session.t0 == null || pos === 0);
     if (!needCount) return beginRun();
@@ -902,8 +934,8 @@
       beginRun();
     }, 800);
   }
-  function pause() { if (settings.mode === 'fixed') stopFixed(); else stopListening(); saveSession(); }
-  const togglePlay = () => running() ? pause() : play();
+  function pause(src) { uiLog(`pause (${src || '?'})`); if (settings.mode === 'fixed') stopFixed(); else stopListening(); saveSession(); }
+  const togglePlay = (src) => running() ? pause(src) : play(src);
 
   function setMode(m) {
     if (running()) pause();
@@ -1069,9 +1101,10 @@
     $('tb-min').addEventListener('click', () => window.desktop.minimize());
     $('tb-close').addEventListener('click', () => window.desktop.close());
     $('hud-close').addEventListener('click', () => window.desktop.close());
+    window.desktop.onHotkeys(k => { keys = k; updateKeyHints(); setPlayUI(running() ? 'on' : 'off'); });
     window.desktop.onHotkey(a => {
       if (!promptOpen()) return;
-      if (a === 'toggle') togglePlay();
+      if (a === 'toggle') togglePlay('hotkey');
       else if (a === 'next') lineStep(1);
       else if (a === 'prev') lineStep(-1);
       else if (a === 'mark') markBad();
@@ -1136,7 +1169,8 @@
 
   $('go').addEventListener('click', openPrompter);
   $('back').addEventListener('click', closePrompter);
-  $('play-btn').addEventListener('click', togglePlay);
+  $('play-btn').addEventListener('click', () => togglePlay('button'));
+  $('mini-play').addEventListener('click', () => togglePlay('mini'));
   $('mode-btn').addEventListener('click', () => setMode(settings.mode === 'fixed' ? 'voice' : 'fixed'));
   $('slower').addEventListener('click', () => changeSpeed(-10));
   $('faster').addEventListener('click', () => changeSpeed(10));
@@ -1169,7 +1203,7 @@
       return;
     }
     switch (e.key) {
-      case ' ': e.preventDefault(); togglePlay(); break;
+      case ' ': e.preventDefault(); togglePlay('space'); break;
       case 'ArrowDown': e.preventDefault(); lineStep(1); break;
       case 'ArrowUp': e.preventDefault(); lineStep(-1); break;
       case 'PageDown': e.preventDefault(); sectionStep(1); break;
@@ -1209,6 +1243,7 @@
   applySettings();
   loadScript(lib.current);
   updateExportBtn();
+  updateKeyHints();
 
   // חשיפה לבדיקות
   window.__tp = { onHeard, get pos() { return pos; }, setPos, norm, sim, get session() { return session; },
