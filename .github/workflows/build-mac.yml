@@ -82,9 +82,8 @@ jobs:
         working-directory: stage
         run: |
           app="$(ls -d dist/mac-universal/*.app | head -1)"
-          printf 'שלום לכולם, זו בדיקה של הטלפרומפטר במק.
-' > "$RUNNER_TEMP/test.txt"
-          TP_AUTOTEST="$RUNNER_TEMP/test.txt" TP_SECONDS=15 TP_ENGINE=browser \n            "$app/Contents/MacOS/Practice AI Teleprompter" > "$RUNNER_TEMP/run.log" 2>&1 &
+          echo "שלום לכולם, זו בדיקה של הטלפרומפטר במק." > "$RUNNER_TEMP/test.txt"
+          TP_AUTOTEST="$RUNNER_TEMP/test.txt" TP_SECONDS=15 TP_ENGINE=browser "$app/Contents/MacOS/Practice AI Teleprompter" > "$RUNNER_TEMP/run.log" 2>&1 &
           pid=$!
           sleep 10
           alive=no; kill -0 $pid 2>/dev/null && alive=yes
@@ -94,7 +93,7 @@ jobs:
           log="$HOME/Library/Application Support/Practice AI Teleprompter/teleprompter.log"
           echo "--- app log:"; cat "$log" || true
           test "$alive" = yes
-          ! grep -q "uncaught|spawn error" "$log"
+          ! grep -qE "uncaught|spawn error" "$log"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -113,6 +112,7 @@ jobs:
           fi
           gh release edit "$TAG" --notes-file desktop/mac/RELEASE_NOTES.md
           # מוחקים קבצי dmg ישנים (למשל arm64/x64 נפרדים) כדי שיישאר קובץ אחד ברור
-          for a in $(gh release view "$TAG" --json assets --jq '.assets[].name' | grep '.dmg
-); do gh release delete-asset "$TAG" "$a" -y; done
+          gh release view "$TAG" --json assets --jq '.assets[].name | select(endswith(".dmg"))' | while read -r a; do
+            gh release delete-asset "$TAG" "$a" -y
+          done
           gh release upload "$TAG" stage/dist/*.dmg --clobber
