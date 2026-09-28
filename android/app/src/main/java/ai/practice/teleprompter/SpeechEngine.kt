@@ -53,6 +53,10 @@ class SpeechEngine(
     private var pipeWrite: ParcelFileDescriptor? = null
     private var pipeRead: ParcelFileDescriptor? = null
     @Volatile private var level = 0.0
+    private var listenStartedAt = 0L
+    private var results = 0
+    private var levelSum = 0.0
+    private var levelTicks = 0
 
     private val muted = mutableListOf<Int>()
 
@@ -66,6 +70,9 @@ class SpeechEngine(
         shared = mode != "direct" && Build.VERSION.SDK_INT >= 33
         listening = true
         lastFinal = ""
+        val now = System.currentTimeMillis()
+        listenStartedAt = now; lastResultAt = now; loudSince = 0L
+        results = 0; levelSum = 0.0; levelTicks = 0
         muteBeeps(true)
         if (shared && !startSharedAudio()) shared = false
         log("speech start lang=$lang shared=$shared sdk=${Build.VERSION.SDK_INT}")
@@ -82,7 +89,7 @@ class SpeechEngine(
         recognizer = null
         stopSharedAudio()
         muteBeeps(false)
-        if (was) log("speech stop")
+        if (was) log("speech stop: results=$results avgLevel=${if (levelTicks > 0) "%.3f".format(levelSum / levelTicks) else "-"} shared=$shared")
         if (was && notify) onStatus("ready", "מושהה")
     }
 
@@ -134,9 +141,11 @@ class SpeechEngine(
             if (!listening) return
             val now = System.currentTimeMillis()
             if (shared) {
+                levelSum += level; levelTicks++
                 if (level > 0.02) { if (loudSince == 0L) loudSince = now } else if (level < 0.005) loudSince = 0L
-                if (loudSince > 0 && now - loudSince > 7000 && now - lastResultAt > 7000) {
-                    log("shared mode: audio but no results for 7s -> fallback to direct")
+                val quietFor = now - maxOf(lastResultAt, listenStartedAt)
+                if (loudSince > 0 && now - loudSince > 8000 && quietFor > 8000) {
+                    log("shared mode: loud for ${now - loudSince}ms but no results for ${quietFor}ms (results so far=$results) -> fallback to direct")
                     fallbackToDirect()
                     return
                 }
@@ -146,15 +155,18 @@ class SpeechEngine(
     }
 
     private fun fallbackToDirect() {
+        recognizer?.let { try { it.cancel() } catch (_: Exception) {}; try { it.destroy() } catch (_: Exception) {} }
+        recognizer = null
         stopSharedAudio()
         shared = false
+        lastResultAt = System.currentTimeMillis(); loudSince = 0L
         onStatus("listening", "מקשיב (מיקרופון רגיל)")
-        startSession()
-        main.postDelayed(watchdog, 1000)
+        restart(400)
     }
 
     private fun emit(partial: String) {
         lastResultAt = System.currentTimeMillis()
+        if (results++ == 0) log("first result after ${lastResultAt - listenStartedAt}ms (shared=$shared)")
         val text = (lastFinal + " " + partial).trim()
         if (text.isNotEmpty()) onText(text)
     }
@@ -200,7 +212,7 @@ class SpeechEngine(
             log("recognizer error $error after ${age}ms (shared=$shared)")
             when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> restart(50)
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> restart(400)
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY, SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> restart(600)
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                     onStatus("error", "אין הרשאה למיקרופון")
                     stop(notify = false)
