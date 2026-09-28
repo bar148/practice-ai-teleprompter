@@ -6,7 +6,7 @@ $src = $PSScriptRoot
 $work = Join-Path $env:LOCALAPPDATA 'VoiceTeleprompter\build'
 
 New-Item -ItemType Directory -Force $work | Out-Null
-foreach ($f in 'main.js', 'preload.js', 'bridge.html', 'package.json', 'icon.png') {
+foreach ($f in 'main.js', 'preload.js', 'bridge.html', 'package.json', 'icon.png', 'afterPack.js') {
     Copy-Item (Join-Path $src "desktop\$f") $work -Force
 }
 Copy-Item (Join-Path $src 'index.html') $work -Force

@@ -161,6 +161,43 @@ function log(line) {
   } catch {}
 }
 
+// ---------------- זיהוי דיבור במק (tp-speech, זיהוי הדיבור המובנה של אפל) ----------------
+const MAC_HELPER = app.isPackaged ? path.join(process.resourcesPath, 'tp-speech') : path.join(__dirname, 'mac', 'tp-speech');
+let macHelper = null;
+
+function startMacHelper() {
+  if (macHelper || !fs.existsSync(MAC_HELPER)) return;
+  log('starting mac speech helper');
+  macHelper = spawn(MAC_HELPER, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let buf = '';
+  macHelper.stdout.on('data', d => {
+    buf += d;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 1);
+      let m; try { m = JSON.parse(line); } catch { continue; }
+      log(m.type === 'text' ? `heard: ${m.text}` : `helper ${m.state}: ${m.msg}`);
+      toRenderer(m);
+    }
+  });
+  macHelper.stderr.on('data', d => log(`helper stderr: ${String(d).trim()}`));
+  macHelper.on('exit', code => { log(`mac helper exited (${code})`); macHelper = null; });
+}
+
+function macSend(msg) {
+  log(`engine ${msg.type}${msg.lang ? ' ' + msg.lang : ''}`);
+  if (!macHelper) startMacHelper();
+  if (!macHelper) { toRenderer({ type: 'status', state: 'error', msg: 'רכיב זיהוי הדיבור חסר - התקן מחדש את האפליקציה' }); return; }
+  macHelper.stdin.write(msg.type === 'start' ? `start ${msg.lang || 'he-IL'}\n` : `${msg.type}\n`);
+}
+
+function stopMacHelper() {
+  if (!macHelper) return;
+  try { macHelper.stdin.write('quit\n'); } catch {}
+  try { macHelper.kill(); } catch {}
+  macHelper = null;
+}
+
 // ---------------- מקש למצגת ----------------
 function sendKey(key) {
   if (key !== 'right') return;
@@ -201,9 +238,11 @@ function setMode(m, opts = {}) {
     win.setBounds(loadFloatBounds());
     // כשמעבירים שקפים - החלון לא לוקח פוקוס, כדי שהמצגת תקבל את המקשים
     win.setFocusable(!opts.noFocus);
+    if (IS_MAC) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });   // נשאר מעל מצגת במסך מלא
     registerHotkeys();
   } else {
     unregisterHotkeys();
+    if (IS_MAC) win.setVisibleOnAllWorkspaces(false);
     win.setFocusable(true);
     win.setAlwaysOnTop(false);
     win.setOpacity(1);
@@ -260,19 +299,26 @@ function runAutotest(textFile) {
   });
 }
 
-ipcMain.on('info', e => { e.returnValue = { whisper: fs.existsSync(PY), browser: !!findBrowser(), platform: process.platform }; });
+ipcMain.on('info', e => { e.returnValue = { whisper: fs.existsSync(PY), browser: IS_MAC ? fs.existsSync(MAC_HELPER) : !!findBrowser(), platform: process.platform, keys: plannedKeys() }; });
 ipcMain.on('log', (_e, line) => log(`ui: ${line}`));
 ipcMain.on('set-mode', (_e, m, opts) => win && setMode(m, opts || {}));
 ipcMain.on('set-opacity', (_e, v) => win && mode === 'float' && win.setOpacity(Math.max(0.3, Math.min(1, v))));
 ipcMain.on('minimize', () => win && win.minimize());
 ipcMain.on('close', () => app.quit());
-ipcMain.on('engine', (_e, msg) => bridgeSend(msg));
+ipcMain.on('engine', (_e, msg) => (IS_MAC ? macSend(msg) : bridgeSend(msg)));
 ipcMain.on('whisper', (_e, on) => (on ? startWhisper() : stopWhisper()));
 ipcMain.on('send-key', (_e, key) => sendKey(key));
 
 // קיצורים גלובליים - פעילים רק בזמן ההקראה (בחלון הצף), כדי לא לתפוס מקשים מתוכנות אחרות סתם.
 // לכל פעולה יש חלופות: אם תוכנה אחרת כבר תפסה צירוף (למשל Ctrl+Alt+Space של אפליקציית Claude), עוברים לבא בתור.
-const HOTKEYS = {
+// במק: Ctrl+Space ו-Ctrl+Option+Space מחליפים שפת מקלדת - לא נוגעים בהם. F9 ב-MacBook = Fn+F9.
+const HOTKEYS = IS_MAC ? {
+  toggle: ['F9', 'Control+Alt+Return'],
+  mark: ['F10', 'Control+Alt+M'],
+  next: ['Control+Alt+Down'],
+  prev: ['Control+Alt+Up'],
+  hide: ['Control+Alt+H'],
+} : {
   toggle: ['F9', 'Control+Shift+Space', 'MediaPlayPause'],
   mark: ['F10', 'Control+Shift+M'],
   next: ['Control+Alt+Down', 'Control+Shift+Down'],
@@ -280,6 +326,7 @@ const HOTKEYS = {
   hide: ['Control+Alt+H', 'Control+Shift+H'],
 };
 let activeKeys = {};
+const plannedKeys = () => Object.fromEntries(Object.entries(HOTKEYS).map(([a, list]) => [a, list[0]]));
 
 function onHotkey(action) {
   if (!win) return;
@@ -309,8 +356,8 @@ function unregisterHotkeys() {
 }
 
 app.whenReady().then(() => {
-  log(`app ${app.getVersion()} start, ${process.platform}, browser: ${findBrowser()}`);
-  startBridgeServer();
+  log(`app ${app.getVersion()} start, ${process.platform}, ${IS_MAC ? `helper: ${fs.existsSync(MAC_HELPER)}` : `browser: ${findBrowser()}`}`);
+  if (IS_MAC) startMacHelper(); else startBridgeServer();
   createWindow();
 });
 
@@ -318,5 +365,6 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   stopWhisper();
   killBridge();
+  stopMacHelper();
 });
 app.on('window-all-closed', () => app.quit());

@@ -1,0 +1,86 @@
+# בונה את גרסת המק על מחשב מק בענן של GitHub ומעלה את קובצי ה-dmg לדף הורדה.
+# הפעלה: Actions > Build macOS > Run workflow (אפשר לבחור לאיזה דף הורדה להעלות).
+# חתימה של אפל (לא חובה): אם מוגדרים הסודות MAC_CERT_P12_BASE64 / MAC_CERT_PASSWORD / APPLE_ID /
+# APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID - האפליקציה נחתמת ונשלחת לאישור של אפל. בלעדיהם - חתימת אד-הוק.
+name: Build macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "דף ההורדה להעלאה (ייווצר כגרסת בטא אם לא קיים)"
+        default: "mac-beta"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Stage app files
+        run: |
+          mkdir -p stage
+          cp desktop/main.js desktop/preload.js desktop/bridge.html desktop/package.json desktop/icon.png \
+             desktop/afterPack.js desktop/entitlements.mac.plist index.html whisper_server.py stage/
+
+      - name: Build speech helper (Apple Silicon + Intel)
+        run: bash desktop/mac/build-helper.sh stage/mac-helper
+
+      - name: Check Hebrew speech recognition is available
+        run: stage/mac-helper/tp-speech --check
+
+      - name: Install build tools
+        working-directory: stage
+        run: npm install --no-audit --no-fund --save-dev electron@44.4.5 electron-builder@26.15.3
+
+      - name: Build dmg
+        working-directory: stage
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ] && [ -n "$APPLE_ID" ]; then
+            echo "Signing with Developer ID + notarization"
+            npx electron-builder --mac --publish never -c.mac.notarize=true
+          else
+            echo "No Apple Developer secrets - ad-hoc signing"
+            export CSC_IDENTITY_AUTO_DISCOVERY=false TP_ADHOC=1
+            npx electron-builder --mac --publish never
+          fi
+          ls -la dist
+
+      - name: Verify app bundle
+        working-directory: stage
+        run: |
+          app="$(ls -d dist/mac-arm64/*.app | head -1)"
+          test -x "$app/Contents/Resources/tp-speech"
+          codesign --verify --deep --verbose=2 "$app"
+          plutil -p "$app/Contents/Info.plist" | grep -E "NSMicrophoneUsageDescription|NSSpeechRecognitionUsageDescription"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-dmg
+          path: stage/dist/*.dmg
+
+      - name: Upload to release page
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+              --title "טלפרומפטר פרקטי AI למק (בטא)" \
+              --notes-file desktop/mac/RELEASE_NOTES.md
+          fi
+          gh release upload "$TAG" stage/dist/*.dmg --clobber

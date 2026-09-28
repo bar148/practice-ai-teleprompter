@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- נצרב לתוך הקובץ הבינארי של tp-speech: macOS דורש הסבר למה צריך מיקרופון וזיהוי דיבור -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.barshaltiel.voiceteleprompter.speech</string>
+  <key>CFBundleName</key>
+  <string>Practice AI Teleprompter Speech</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>הטלפרומפטר מקשיב לקריאה שלך כדי לגלול את הטקסט</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>הטלפרומפטר מזהה את המילים שאתה מקריא כדי לדעת איפה אתה בטקסט</string>
+</dict>
+</plist>

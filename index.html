@@ -763,9 +763,15 @@
   const engineName = () => DESKTOP ? settings.engine : 'web';
 
   // קיצורי המקלדת שהאפליקציה קיבלה בפועל (דסקטופ) - מה שמוצג למשתמש תמיד תואם למה שעובד
-  let keys = DESKTOP ? { toggle: 'F9', mark: 'F10', next: 'Control+Alt+Down', prev: 'Control+Alt+Up', hide: 'Control+Alt+H' } : { toggle: 'Space' };
-  const prettyKey = k => !k ? 'לא זמין' : k.replace('Control', 'Ctrl').replace('MediaPlayPause', '⏯').replace('Space', 'רווח')
-    .replace('Down', '↓').replace('Up', '↑').split('+').join('+');
+  const DINFO = DESKTOP ? window.desktop.info() : {};
+  const IS_MAC = DINFO.platform === 'darwin';
+  let keys = DESKTOP ? (DINFO.keys || { toggle: 'F9', mark: 'F10', next: 'Control+Alt+Down', prev: 'Control+Alt+Up', hide: 'Control+Alt+H' }) : { toggle: 'Space' };
+  const prettyKey = k => {
+    if (!k) return 'לא זמין';
+    if (IS_MAC) return k.replace('Control', '⌃').replace('Alt', '⌥').replace('Command', '⌘').replace('Shift', '⇧')
+      .replace('Return', '↩').replace('Down', '↓').replace('Up', '↑').split('+').join('');
+    return k.replace('Control', 'Ctrl').replace('MediaPlayPause', '⏯').replace('Space', 'רווח').replace('Down', '↓').replace('Up', '↑');
+  };
   function updateKeyHints() {
     const t = prettyKey(keys.toggle);
     $('play-btn').title = `הפעלה / עצירה (${t})`;
@@ -864,8 +870,8 @@
     if (m.type === 'text') onHeard(m.text);
     else if (m.type === 'status') {
       if (m.state === 'error') engineError(m.msg);
-      else if (m.state === 'listening') { setPlayUI('on', ''); setEngineStatus('מנוע מקוון מקשיב'); }
-      else setEngineStatus(m.msg === 'מוכן' ? 'מנוע מקוון מוכן' : m.msg);
+      else if (m.state === 'listening') { setPlayUI('on', ''); setEngineStatus('זיהוי הדיבור מקשיב'); }
+      else setEngineStatus(m.msg === 'מוכן' ? 'זיהוי הדיבור מוכן' : m.msg);
     }
   }
 
@@ -1089,13 +1095,17 @@
   function changeSpeed(d) { settings.wpm = Math.max(60, Math.min(220, settings.wpm + d)); $('s-wpm').value = settings.wpm; applySettings(); updateMeta(); }
 
   if (DESKTOP) {
-    const info = window.desktop.info();
+    const info = DINFO;
+    if (IS_MAC) {
+      document.body.classList.add('mac');
+      $('s-engine').querySelector('[value=browser]').textContent = 'זיהוי הדיבור של macOS - עובד בכל מק';
+    }
     if (!info.whisper) {
       $('s-engine').querySelector('[value=whisper]').textContent = 'Whisper מקומי (לא מותקן במחשב הזה)';
       $('s-engine').querySelector('[value=whisper]').disabled = true;
       if (settings.engine === 'whisper') { settings.engine = 'browser'; $('s-engine').value = 'browser'; }
     }
-    if (!info.browser) setEngineStatus('לא נמצא Edge או Chrome במחשב - המנוע המקוון לא זמין', true);
+    if (!info.browser) setEngineStatus(IS_MAC ? 'רכיב זיהוי הדיבור חסר - התקן מחדש את האפליקציה' : 'לא נמצא Edge או Chrome במחשב - המנוע המקוון לא זמין', true);
     window.desktop.onEngine(onBridge);
     if (settings.engine === 'whisper') { connectWhisper(); window.desktop.whisper(true); }
     $('tb-min').addEventListener('click', () => window.desktop.minimize());

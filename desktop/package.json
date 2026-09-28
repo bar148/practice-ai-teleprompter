@@ -53,9 +53,25 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "icon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "extraResources": [
+        {
+          "from": "mac-helper/tp-speech",
+          "to": "tp-speech"
+        }
+      ],
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "הטלפרומפטר מקשיב לקריאה שלך כדי לגלול את הטקסט"
+        "NSMicrophoneUsageDescription": "הטלפרומפטר מקשיב לקריאה שלך כדי לגלול את הטקסט",
+        "NSSpeechRecognitionUsageDescription": "הטלפרומפטר מזהה את המילים שאתה מקריא כדי לדעת איפה אתה בטקסט"
       }
+    },
+    "afterPack": "afterPack.js",
+    "dmg": {
+      "artifactName": "Practice-AI-Teleprompter-${arch}.dmg",
+      "title": "Practice AI Teleprompter"
     }
   }
 }
